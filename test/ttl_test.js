@@ -4,7 +4,7 @@ var http = require('http');
 var request = require('request');
 var querystring = require('querystring');
 var redis = require("redis");
-var redclient = redis.createClient();
+var redclient;
 
 var env = process.env;
 var chost = env.CAS_HOST;
@@ -16,16 +16,19 @@ var casurl = casservice + 'cas/login'
 var testhost = env.CAS_VALIDATE_TEST_URL || '127.0.0.1'
 var testport = env.CAS_VALIDATE_TEST_PORT || 3000
 
+var config_okay = require('config_okay')
+
 var _ = require('underscore');
-
-
 
 var async = require('async')
 
 var express = require('express')
+var session = require('express-session');
+var RedisStore = require('connect-redis')(session);
 
-var connect = require('connect')
-var RedisStore = require('connect-redis')(connect);
+// required now for express 4, connect 2
+var bodyParser = require('body-parser')
+var cookieParser = require('cookie-parser')
 
 var jar;
 function _setup_request(cb){
@@ -101,6 +104,42 @@ function cas_logout_function(rq,callback){
 }
 
 
+
+function redis_params(callback){
+    var _host = "127.0.0.1"
+    var _port = 6379
+
+    var fs     = require('fs')
+
+    var path    = require('path')
+    var rootdir = path.normalize(__dirname)
+
+    var config_file = rootdir+'/ttl_test_config.json'
+    config_okay(config_file,function(err,config){
+        if(err !== null){
+            // presume localhost?
+            throw new Error(err)
+        }
+        // stash this file in the env too, for ticket_store.js
+        process.env.CONFIG_FILE=config_file
+        redclient = redis.createClient(config.redis.port||_port
+                                      ,config.redis.host||_host
+                                      ,config.redis);
+        return callback(err,config.redis)
+    })
+}
+var redis_config
+
+before(function(done){
+    console.log('setting up redis params')
+
+    redis_params(function(err,config){
+        redis_config = config
+        console.log({'config is':config})
+        return done()
+    })
+})
+
 describe('cas_validate ttl in redis',function(){
 
     process.env.CAS_SESSION_TTL=2
@@ -112,14 +151,21 @@ describe('cas_validate ttl in redis',function(){
     before(
 
         function(done){
-            app = connect()
-                  .use(connect.bodyParser())
-                  .use(connect.cookieParser('barley Waterloo Napoleon loser'))
-                  .use(connect.session({store: new RedisStore({ttl: 2 * process.env.CAS_SESSION_TTL})
-                                       ,secret:'barley Waterloo Napoleon loser'
-                                        //,cookie:{maxAge:2 * 1000 * process.env.CAS_SESSION_TTL}
-                                        // don't need to set cookie max age
-                                       })
+
+            var my_redis_params=_.extend({},redis_config,{ttl: 2 * process.env.CAS_SESSION_TTL})
+            console.log(my_redis_params)
+            app = express()
+            // parse application/x-www-form-urlencoded
+                  .use(bodyParser.urlencoded({ 'extended': false }))
+
+            // parse application/json
+                  .use(bodyParser.json())
+                  .use(cookieParser('barley Waterloo Napoleon loser'))
+                  .use(session({store: new RedisStore(my_redis_params)
+                               ,secret:'barley Waterloo Napoleon loser'
+                                //,cookie:{maxAge:2 * 1000 * process.env.CAS_SESSION_TTL}
+                                // don't need to set cookie max age
+                               })
                       )
 
             app.use('/username',function(req,res,next){
@@ -133,22 +179,22 @@ describe('cas_validate ttl in redis',function(){
             app.use('/quit',cas_validate.logout({'service':'http://'+testhost+':'+testport}))
             app.use(cas_validate.ssoff())
             app.use(cas_validate.ticket({'cas_host':chost
-                                         ,'service':'http://'+testhost+':'+testport}))
+                                        ,'service':'http://'+testhost+':'+testport}))
             app.use(cas_validate.check_and_return({'cas_host':chost
-                                                 ,'service':'http://'+testhost+':'+testport}))
+                                                  ,'service':'http://'+testhost+':'+testport}))
             app.use(function(req, res, next){
-                        if(req.session.st){
-                            return res.end('hello '+req.session.name)
-                        }else{
-                            return res.end('hello world (not logged in)')
-                        }
-                    }
+                if(req.session.st){
+                    return res.end('hello '+req.session.name)
+                }else{
+                    return res.end('hello world (not logged in)')
+                }
+            }
                    )
-            var login = connect()
-                  .use(connect.cookieParser('6ft barley at Waterloo'))
-                  .use(connect.session({store: new RedisStore({ttl: 2 * process.env.CAS_SESSION_TTL})
-                                       ,secret:'6ft barley at Waterloo'
-                                        //,cookie:{maxAge:2 * 1000 * process.env.CAS_SESSION_TTL}
+            var login = express()
+                  .use(cookieParser('6ft barley at Waterloo'))
+                        .use(session({store: new RedisStore(my_redis_params)
+                                     ,secret:'6ft barley at Waterloo'
+                                      //,cookie:{maxAge:2 * 1000 * process.env.CAS_SESSION_TTL}
                                         // don't need to set cookie max age
                                        })
                       )
@@ -347,10 +393,16 @@ describe('cas_validate ttl in redis with same ttl for server',function(){
     before(
 
         function(done){
-            app = connect()
-                  .use(connect.bodyParser())
-                  .use(connect.cookieParser('barley Waterloo Napoleon loser'))
-                  .use(connect.session({store: new RedisStore({ttl: process.env.CAS_SESSION_TTL})
+            var my_redis_params=_.extend({},redis_config,{ttl: process.env.CAS_SESSION_TTL})
+
+            app = express()
+            // parse application/x-www-form-urlencoded
+                  .use(bodyParser.urlencoded({ 'extended': false }))
+
+            // parse application/json
+                  .use(bodyParser.json())
+                  .use(cookieParser('barley Waterloo Napoleon loser'))
+                  .use(session({store: new RedisStore(my_redis_params)
                                        ,secret:'barley Waterloo Napoleon loser'
                                         //,cookie:{maxAge:2 * 1000 * process.env.CAS_SESSION_TTL}
                                         // don't need to set cookie max age
@@ -379,14 +431,14 @@ describe('cas_validate ttl in redis with same ttl for server',function(){
                         }
                     }
                    )
-            var login = connect()
-                  .use(connect.cookieParser('6ft barley at Waterloo'))
-                  .use(connect.session({store: new RedisStore({ttl: process.env.CAS_SESSION_TTL})
-                                       ,secret:'6ft barley at Waterloo'
-                                        //,cookie:{maxAge:2 * 1000 * process.env.CAS_SESSION_TTL}
-                                        // don't need to set cookie max age
-                                       })
-                      )
+            var login = express()
+                  .use(cookieParser('6ft barley at Waterloo'))
+                        .use(session({store: new RedisStore(my_redis_params)
+                                     ,secret:'6ft barley at Waterloo'
+                                      //,cookie:{maxAge:2 * 1000 * process.env.CAS_SESSION_TTL}
+                                      // don't need to set cookie max age
+                                     })
+                            )
             login.use('/login',cas_validate.check_or_redirect({'cas_host':chost
                                                               ,'service':'http://'+testhost+':'+testport+'/'}))
             login.use('/',app)

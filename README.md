@@ -18,6 +18,50 @@ applications.  The original development was conducted when Connect
 still had routing capabilities, but all but one feature still works
 with the latest Connect, and all features work with Express.
 
+# Version 0.1.10
+
+Add redis options.  Closes issue #20.
+
+## Redis connection options
+
+To use the redis connections options, say if you have your redis
+server on a different machine than the server running this library, or
+perhaps if your redis server needs a password, create a config.json
+file in the root directory of your application.  Make sure only the
+"user" account can see it (in Linux, that means run `chmod 0600`).
+(The reason I do this is because it is a bad idea to leave files around
+that anyone can read with usernames and passwords and that sort of
+thing, so I wrote that into my config_okay library.)
+
+`config.json` can have any or all of the options documented at
+<https://github.com/mranney/node_redis#rediscreateclient>, and will be
+used to create the redis client with redis.createClient(port, host,
+options).  For example, it might look like:
+
+```json
+{
+    "redis": {
+        "host": "127.0.0.1",
+        "port":6379,
+        "detect_buffers": true,
+        "password":"somepass"
+    }
+}
+```
+
+
+If have a password included in the config file, then a call to
+`redis_client.auth("somepass")` will be issued right after the create
+client command, as documented in the node-redis client.
+
+The password, host, and port will be stripped out of this config
+object, and the rest (Which might be empty) is sent off to redis in
+the create_client command.
+
+This feature is lightly tested, so please send bug reports if it
+causes issues.  Check out the tests for what I am testing if you are
+concerned.
+
 
 # Redis version 2.6
 
